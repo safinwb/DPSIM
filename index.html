@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XYZ Cascaded PID Simulator v3</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg:      #0a0c10;
+    --panel:   #0f1318;
+    --border:  #1e2530;
+    --accent:  #00e5ff;   /* X lateral  — cyan   */
+    --accent2: #ff6b35;   /* Y forward  — orange */
+    --accent3: #39ff14;   /* velocity   — green  */
+    --accent4: #bf7fff;   /* Z yaw      — purple */
+    --wind:    #7dd3fc;   /* wind       — sky    */
+    --text:    #c8d6e5;
+    --dim:     #4a5568;
+    --grid:    rgba(0,229,255,0.04);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Exo 2', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content:'';
+    position:fixed; inset:0;
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events:none; z-index:0;
+  }
+
+  .app {
+    position:relative; z-index:1;
+    display:grid; grid-template-rows: auto 1fr auto;
+    min-height:100vh; padding:14px; gap:14px;
+    max-width:1560px; margin:0 auto;
+  }
+
+  header {
+    display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--border); padding-bottom:10px;
+  }
+  .logo { font-family:'Share Tech Mono',monospace; font-size:13px; color:var(--accent); letter-spacing:4px; }
+  .logo span { color:var(--dim); }
+  .status-bar { display:flex; gap:18px; font-family:'Share Tech Mono',monospace; font-size:11px; }
+  .status-item { color:var(--dim); }
+  .status-item b { color:var(--accent3); }
+
+  .main { display:grid; grid-template-columns:1fr 380px; gap:14px; align-items:start; }
+
+  .sim-panel { background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:14px; }
+  .panel-label { font-family:'Share Tech Mono',monospace; font-size:10px; letter-spacing:3px; color:var(--dim); margin-bottom:10px; text-transform:uppercase; }
+  #simCanvas { display:block; width:100%; border:1px solid var(--border); border-radius:2px; cursor:crosshair; background:#060810; }
+  .canvas-hint { font-size:10px; color:var(--dim); margin-top:7px; font-family:'Share Tech Mono',monospace; text-align:center; }
+
+  .sidebar { display:flex; flex-direction:column; gap:11px; }
+
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:13px; }
+  .card-title {
+    font-family:'Share Tech Mono',monospace; font-size:10px; letter-spacing:3px;
+    color:var(--dim); text-transform:uppercase; margin-bottom:11px;
+    display:flex; align-items:center; gap:8px;
+  }
+  .card-title::after { content:''; flex:1; height:1px; background:var(--border); }
+
+  /* Controller button */
+  .ctrl-btn {
+    width:100%; padding:9px; border:1px solid var(--border); border-radius:3px;
+    font-family:'Share Tech Mono',monospace; font-size:11px; letter-spacing:3px;
+    cursor:pointer; transition:all 0.2s; text-align:center; text-transform:uppercase;
+  }
+  .ctrl-btn.on  { background:rgba(57,255,20,0.08);  border-color:var(--accent3); color:var(--accent3); box-shadow:0 0 14px rgba(57,255,20,0.12); }
+  .ctrl-btn.off { background:rgba(255,107,53,0.06); border-color:var(--accent2); color:var(--accent2); }
+
+  /* Heading knobs */
+  .dual-knob { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .knob-block { display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .knob-block canvas { cursor:grab; }
+  .knob-block canvas:active { cursor:grabbing; }
+  .knob-label { font-family:'Share Tech Mono',monospace; font-size:9px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; }
+  .knob-readout { font-family:'Share Tech Mono',monospace; font-size:21px; line-height:1; text-align:center; }
+  .knob-unit { font-family:'Share Tech Mono',monospace; font-size:9px; color:var(--dim); }
+
+  /* PID axis tabs */
+  .pid-tabs { display:flex; gap:4px; margin-bottom:11px; }
+  .pid-tab {
+    flex:1; padding:5px; border:1px solid var(--border); background:transparent;
+    color:var(--dim); font-family:'Share Tech Mono',monospace; font-size:10px;
+    letter-spacing:1px; border-radius:3px; cursor:pointer; transition:all 0.15s; text-align:center;
+  }
+  .pid-tab.ax { border-color:var(--accent);  color:var(--accent);  background:rgba(0,229,255,0.07); }
+  .pid-tab.ay { border-color:var(--accent2); color:var(--accent2); background:rgba(255,107,53,0.07); }
+  .pid-tab.az { border-color:var(--accent4); color:var(--accent4); background:rgba(191,127,255,0.07); }
+
+  /* Cascade section labels */
+  .loop-label {
+    font-family:'Share Tech Mono',monospace; font-size:9px; letter-spacing:2px;
+    color:var(--dim); text-transform:uppercase; margin:8px 0 6px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .loop-label::after { content:''; flex:1; height:1px; background:var(--border); }
+  .loop-label.inner { color:var(--accent3); }
+
+  .pid-grid { display:flex; flex-direction:column; gap:8px; }
+  .pid-row { display:grid; grid-template-columns:28px 1fr 52px; align-items:center; gap:8px; }
+  .pid-label { font-family:'Share Tech Mono',monospace; font-size:12px; font-weight:bold; }
+
+  /* Velocity limit row */
+  .vlim-row { display:grid; grid-template-columns:auto 1fr 52px; align-items:center; gap:8px; margin-top:8px; padding-top:8px; border-top:1px solid var(--border); }
+  .vlim-label { font-family:'Share Tech Mono',monospace; font-size:9px; color:var(--accent3); letter-spacing:1px; white-space:nowrap; }
+
+  input[type=range] {
+    -webkit-appearance:none; width:100%; height:3px;
+    background:var(--border); border-radius:2px; outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance:none; width:13px; height:13px;
+    border-radius:50%; background:var(--accent); cursor:pointer;
+    box-shadow:0 0 8px rgba(0,229,255,0.5);
+  }
+  .pid-val { font-family:'Share Tech Mono',monospace; font-size:11px; color:var(--text); text-align:right; }
+
+  /* Wind */
+  .wind-compass-wrap { display:flex; align-items:center; gap:12px; }
+  .wind-sliders { flex:1; display:flex; flex-direction:column; gap:8px; }
+
+  /* 3-col command display */
+  .cmd-display { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; }
+  .cmd-box { background:#080b10; border:1px solid var(--border); border-radius:3px; padding:8px; text-align:center; }
+  .cmd-axis { font-family:'Share Tech Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:1px; }
+  .cmd-val  { font-family:'Share Tech Mono',monospace; font-size:17px; margin-top:2px; }
+  .cmd-sub  { font-family:'Share Tech Mono',monospace; font-size:10px; margin-top:1px; }
+  .bar-wrap { height:3px; background:var(--border); border-radius:2px; margin-top:5px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:2px; transition:width 0.05s; }
+
+  /* Telemetry */
+  .tele-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; }
+  .tele-cell { background:#080b10; border:1px solid var(--border); border-radius:3px; padding:7px 8px; }
+  .tele-key  { font-family:'Share Tech Mono',monospace; font-size:9px; color:var(--dim); letter-spacing:1px; text-transform:uppercase; }
+  .tele-val  { font-family:'Share Tech Mono',monospace; font-size:13px; color:var(--accent3); margin-top:2px; }
+
+  /* Buttons */
+  .btn-row { display:flex; gap:7px; }
+  button {
+    flex:1; padding:7px; border:1px solid var(--border); background:transparent;
+    color:var(--text); font-family:'Share Tech Mono',monospace; font-size:10px;
+    letter-spacing:2px; text-transform:uppercase; border-radius:3px; cursor:pointer; transition:all 0.15s;
+  }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button.active { background:rgba(0,229,255,0.08); border-color:var(--accent); color:var(--accent); }
+  button.danger:hover { border-color:var(--accent2); color:var(--accent2); }
+
+  footer {
+    border-top:1px solid var(--border); padding-top:8px;
+    font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--dim);
+    display:flex; justify-content:space-between;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">DP<span>/</span>SIM <span>// CASCADED XYZ PID — v3.0</span></div>
+    <div class="status-bar">
+      <div class="status-item">CTRL: <b id="modeLabel">ACTIVE</b></div>
+      <div class="status-item">LOOP: <b>50 Hz</b></div>
+      <div class="status-item">FRAME: <b id="frameCount">0</b></div>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- ── Viewport ── -->
+    <div class="sim-panel">
+      <div class="panel-label">// simulation viewport</div>
+      <canvas id="simCanvas"></canvas>
+      <div class="canvas-hint">
+        [ LEFT CLICK ] position setpoint &nbsp;|&nbsp; [ RIGHT CLICK ] heading setpoint &nbsp;|&nbsp; [ DRAG TARGET KNOB ] heading setpoint
+      </div>
+    </div>
+
+    <!-- ── Sidebar ── -->
+    <div class="sidebar">
+
+      <!-- Controller toggle -->
+      <div class="card">
+        <div class="card-title">controller</div>
+        <div id="ctrlBtn" class="ctrl-btn on" onclick="toggleController()">● CONTROLLER ACTIVE</div>
+        <div style="margin-top:8px;font-size:10px;color:var(--dim);font-family:'Share Tech Mono',monospace;line-height:1.5">
+          Deactivate to observe open-loop wind drift.
+        </div>
+      </div>
+
+      <!-- Heading knobs -->
+      <div class="card">
+        <div class="card-title">heading</div>
+        <div class="dual-knob">
+          <div class="knob-block">
+            <div class="knob-label">current</div>
+            <canvas id="knobCurrent" width="78" height="78"></canvas>
+            <div class="knob-readout" id="currentHeadingVal" style="color:var(--accent)">000</div>
+            <div class="knob-unit">deg (live)</div>
+          </div>
+          <div class="knob-block">
+            <div class="knob-label">target</div>
+            <canvas id="knobTarget" width="78" height="78"></canvas>
+            <div class="knob-readout" id="targetHeadingVal" style="color:var(--accent4)">000</div>
+            <div class="knob-unit">deg (setpoint)</div>
+          </div>
+        </div>
+        <div style="margin-top:9px;font-size:10px;color:var(--dim);font-family:'Share Tech Mono',monospace;text-align:center">
+          Hdg err: <span id="headingErrDisplay" style="color:var(--accent4)">0.0°</span>
+          &nbsp;|&nbsp; Yaw rate: <span id="angVelDisplay" style="color:var(--accent3)">0.00</span>
+        </div>
+      </div>
+
+      <!-- Vessel dynamics -->
+      <div class="card">
+        <div class="card-title">vessel dynamics</div>
+        <div class="pid-grid">
+          <div class="pid-row">
+            <div class="pid-label" style="color:#e2a96a;font-size:10px">MASS</div>
+            <input type="range" id="dMass" min="1" max="30" step="0.5" value="8"
+              oninput="state.mass=+this.value; document.getElementById('dMassVal').textContent=(+this.value).toFixed(1)">
+            <div class="pid-val" id="dMassVal">8.0</div>
+          </div>
+          <div class="pid-row">
+            <div class="pid-label" style="color:#e2a96a;font-size:10px">τ SRG</div>
+            <input type="range" id="dTauS" min="0.05" max="2.0" step="0.05" value="0.30"
+              oninput="state.tauSurge=+this.value; document.getElementById('dTauSVal').textContent=(+this.value).toFixed(2)">
+            <div class="pid-val" id="dTauSVal">0.30</div>
+          </div>
+          <div class="pid-row">
+            <div class="pid-label" style="color:#e2a96a;font-size:10px">τ SWY</div>
+            <input type="range" id="dTauW" min="0.05" max="2.0" step="0.05" value="0.50"
+              oninput="state.tauSway=+this.value; document.getElementById('dTauWVal').textContent=(+this.value).toFixed(2)">
+            <div class="pid-val" id="dTauWVal">0.50</div>
+          </div>
+          <div class="pid-row">
+            <div class="pid-label" style="color:#e2a96a;font-size:10px">τ YAW</div>
+            <input type="range" id="dTauA" min="0.05" max="2.0" step="0.05" value="0.25"
+              oninput="state.tauAngular=+this.value; document.getElementById('dTauAVal').textContent=(+this.value).toFixed(2)">
+            <div class="pid-val" id="dTauAVal">0.25</div>
+          </div>
+          <div class="pid-row">
+            <div class="pid-label" style="color:#e2a96a;font-size:10px">D SRG</div>
+            <input type="range" id="dDrS" min="0.1" max="6" step="0.1" value="1.2"
+              oninput="state.linDragSurge=+this.value; document.getElementById('dDrSVal').textContent=(+this.value).toFixed(1)">
+            <div class="pid-val" id="dDrSVal">1.2</div>
+          </div>
+          <div class="pid-row">
+            <div class="pid-label" style="color:#e2a96a;font-size:10px">D SWY</div>
+            <input type="range" id="dDrW" min="0.1" max="10" step="0.1" value="3.5"
+              oninput="state.linDragSway=+this.value; document.getElementById('dDrWVal').textContent=(+this.value).toFixed(1)">
+            <div class="pid-val" id="dDrWVal">3.5</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:10px;color:var(--dim);font-family:'Share Tech Mono',monospace;line-height:1.5">
+          τ = thruster lag (s) &nbsp;|&nbsp; D = linear drag coeff<br>
+          Accel: <span id="accelDisp" style="color:#e2a96a">0.00</span> px/s²
+          &nbsp;|&nbsp; Speed: <span id="speedDisp" style="color:var(--accent3)">0.00</span>
+        </div>
+      </div>
+
+      <!-- Wind -->
+      <div class="card">
+        <div class="card-title">environment — wind</div>
+        <div class="wind-compass-wrap">
+          <canvas id="windCompass" width="78" height="78" style="cursor:grab;flex-shrink:0"></canvas>
+          <div class="wind-sliders">
+            <div class="pid-row">
+              <div class="pid-label" style="color:var(--wind);font-size:10px">SPD</div>
+              <input type="range" id="windSpeed" min="0" max="10" step="0.1" value="0"
+                oninput="state.wind.speed=+this.value; document.getElementById('windSpeedVal').textContent=(+this.value).toFixed(1);">
+              <div class="pid-val" id="windSpeedVal">0.0</div>
+            </div>
+            <div class="pid-row">
+              <div class="pid-label" style="color:var(--wind);font-size:10px">DIR</div>
+              <input type="range" id="windDir" min="0" max="359" step="1" value="0"
+                oninput="state.wind.dir=+this.value; document.getElementById('windDirVal').textContent=(+this.value)+'°';">
+              <div class="pid-val" id="windDirVal">0°</div>
+            </div>
+            <div style="font-size:10px;color:var(--dim);font-family:'Share Tech Mono',monospace;line-height:1.6">
+              FROM dir &nbsp;|&nbsp; F:<span id="wFdisp" style="color:var(--wind)">0.00</span>
+              T:<span id="wTdisp" style="color:var(--wind)">0.00</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cascaded PID gains -->
+      <div class="card">
+        <div class="card-title">cascaded pid gains</div>
+
+        <!-- Axis tabs -->
+        <div class="pid-tabs">
+          <div class="pid-tab ax" id="tab-x" onclick="selectAxis('x')">X LAT</div>
+          <div class="pid-tab"   id="tab-y" onclick="selectAxis('y')">Y FWD</div>
+          <div class="pid-tab"   id="tab-z" onclick="selectAxis('z')">Z YAW</div>
+        </div>
+
+        <!-- Outer loop (position) -->
+        <div class="loop-label">outer — position</div>
+        <div class="pid-grid">
+          <div class="pid-row">
+            <div class="pid-label" id="oLabelP" style="color:var(--accent)">Kp</div>
+            <input type="range" id="o_kp" min="0" max="6" step="0.05" value="1.5" oninput="onGainChange()">
+            <div class="pid-val" id="o_kpVal">1.50</div>
+          </div>
+          <div class="pid-row">
+            <div class="pid-label" id="oLabelI" style="color:var(--accent)">Ki</div>
+            <input type="range" id="o_ki" min="0" max="1" step="0.005" value="0.02" oninput="onGainChange()">
+            <div class="pid-val" id="o_kiVal">0.02</div>
+          </div>
+          <div class="pid-row">
+            <div class="pid-label" id="oLabelD" style="color:var(--accent)">Kd</div>
+            <input type="range" id="o_kd" min="0" max="3" step="0.05" value="0.5" oninput="onGainChange()">
+            <div class="pid-val" id="o_kdVal">0.50</div>
+          </div>
+        </div>
+
+        <!-- Velocity limit -->
+        <div class="vlim-row">
+          <div class="vlim-label">VEL LIMIT</div>
+          <input type="range" id="velLim" min="0.1" max="15" step="0.1" value="5" oninput="onGainChange()">
+          <div class="pid-val" id="velLimVal">5.0</div>
+        </div>
+
+        <!-- Inner loop (velocity) -->
+        <div class="loop-label inner" style="margin-top:12px">inner — velocity</div>
+        <div class="pid-grid">
+          <div class="pid-row">
+            <div class="pid-label" id="iLabelP" style="color:var(--accent3)">Kp</div>
+            <input type="range" id="i_kp" min="0" max="8" step="0.05" value="3.0" oninput="onGainChange()">
+            <div class="pid-val" id="i_kpVal">3.00</div>
+          </div>
+          <div class="pid-row">
+            <div class="pid-label" id="iLabelI" style="color:var(--accent3)">Ki</div>
+            <input type="range" id="i_ki" min="0" max="3" step="0.01" value="0.1" oninput="onGainChange()">
+            <div class="pid-val" id="i_kiVal">0.10</div>
+          </div>
+          <div class="pid-row">
+            <div class="pid-label" id="iLabelD" style="color:var(--accent3)">Kd</div>
+            <input type="range" id="i_kd" min="0" max="2" step="0.02" value="0.2" oninput="onGainChange()">
+            <div class="pid-val" id="i_kdVal">0.20</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Command outputs -->
+      <div class="card">
+        <div class="card-title">commands</div>
+        <div class="cmd-display">
+          <div class="cmd-box">
+            <div class="cmd-axis" style="color:var(--accent)">CMD_X (lat)</div>
+            <div class="cmd-val" id="cmdX">0.00</div>
+            <div class="cmd-sub" id="velX" style="color:var(--accent3)">v=0.00</div>
+            <div class="bar-wrap"><div class="bar-fill" id="barX" style="background:var(--accent)"></div></div>
+          </div>
+          <div class="cmd-box">
+            <div class="cmd-axis" style="color:var(--accent2)">CMD_Y (fwd)</div>
+            <div class="cmd-val" id="cmdY">0.00</div>
+            <div class="cmd-sub" id="velY" style="color:var(--accent3)">v=0.00</div>
+            <div class="bar-wrap"><div class="bar-fill" id="barY" style="background:var(--accent2)"></div></div>
+          </div>
+          <div class="cmd-box">
+            <div class="cmd-axis" style="color:var(--accent4)">CMD_Z (yaw)</div>
+            <div class="cmd-val" id="cmdZ">0.00</div>
+            <div class="cmd-sub" id="velZ" style="color:var(--accent3)">ω=0.00</div>
+            <div class="bar-wrap"><div class="bar-fill" id="barZ" style="background:var(--accent4)"></div></div>
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:10px;color:var(--dim);font-family:'Share Tech Mono',monospace;line-height:1.6">
+          Vel setpoints →
+          X:<span id="vsX" style="color:var(--accent3)"> 0.00</span>
+          Y:<span id="vsY" style="color:var(--accent3)"> 0.00</span>
+          Z:<span id="vsZ" style="color:var(--accent4)"> 0.00</span>
+        </div>
+      </div>
+
+      <!-- Telemetry -->
+      <div class="card">
+        <div class="card-title">telemetry</div>
+        <div class="tele-grid">
+          <div class="tele-cell"><div class="tele-key">pos X</div><div class="tele-val" id="telePosX">0.0</div></div>
+          <div class="tele-cell"><div class="tele-key">pos Y</div><div class="tele-val" id="telePosY">0.0</div></div>
+          <div class="tele-cell"><div class="tele-key">dist</div><div class="tele-val" id="teleDist">0.0</div></div>
+          <div class="tele-cell"><div class="tele-key">err X</div><div class="tele-val" id="teleErrX">0.0</div></div>
+          <div class="tele-cell"><div class="tele-key">err Y</div><div class="tele-val" id="teleErrY">0.0</div></div>
+          <div class="tele-cell"><div class="tele-key">hdg err</div><div class="tele-val" id="teleErrZ" style="color:var(--accent4)">0.0°</div></div>
+          <div class="tele-cell"><div class="tele-key">surge</div><div class="tele-val" id="teleSurge">0.00</div></div>
+          <div class="tele-cell"><div class="tele-key">sway</div><div class="tele-val" id="teleSway">0.00</div></div>
+          <div class="tele-cell"><div class="tele-key">heading</div><div class="tele-val" id="teleHdg" style="color:var(--accent)">0°</div></div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="card">
+        <div class="card-title">controls</div>
+        <div class="btn-row">
+          <button id="btnPause" onclick="togglePause()">PAUSE</button>
+          <button class="danger" onclick="resetSim()">RESET</button>
+        </div>
+        <div style="margin-top:7px" class="btn-row">
+          <button onclick="setPreset('dp')">DP</button>
+          <button onclick="setPreset('fast')">FAST</button>
+          <button onclick="setPreset('tight')">TIGHT</button>
+          <button onclick="setPreset('slow')">SLOW</button>
+        </div>
+      </div>
+
+    </div><!-- /sidebar -->
+  </div><!-- /main -->
+
+  <footer>
+    <span>// cascaded PID: pos_err → vel_setpoint (clamped) → vel_err → force_cmd</span>
+    <span>outer: position PID &nbsp;|&nbsp; inner: velocity PID &nbsp;|&nbsp; anisotropic drag</span>
+  </footer>
+</div>
+
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════
+// GAINS STORE — per axis, outer (position) + inner (velocity) + vel limit
+// ═══════════════════════════════════════════════════════════════════
+const gains = {
+  x: { o_kp:1.5, o_ki:0.02, o_kd:0.5, velLim:5.0,  i_kp:3.0, i_ki:0.10, i_kd:0.20 },
+  y: { o_kp:1.5, o_ki:0.02, o_kd:0.5, velLim:5.0,  i_kp:3.0, i_ki:0.10, i_kd:0.20 },
+  z: { o_kp:2.0, o_ki:0.01, o_kd:0.8, velLim:8.0,  i_kp:4.0, i_ki:0.05, i_kd:0.10 },
+};
+
+let activeAxis = 'x';
+let controllerActive = true;
+let simPaused = false;
+
+// ═══════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════
+const state = {
+  robot:  { x:410, y:300 },
+  target: { x:410, y:300 },
+  heading:       0,   // deg, 0=East screen, CCW+
+  targetHeading: 0,   // deg
+  vel:    { x:0, y:0 },   // world-frame velocity (pixels/tick)
+  angularVel: 0,           // deg/tick
+
+  // Body-frame velocities (derived each tick, used by inner loop)
+  surge: 0,
+  sway:  0,
+  yawRate: 0,   // same as angularVel, deg/tick
+
+  // PID integrators & prev-errors — outer loop
+  outer: {
+    iX:0, iY:0, iZ:0,
+    peX:0, peY:0, peZ:0,
+  },
+  // PID integrators & prev-errors — inner loop
+  inner: {
+    iX:0, iY:0, iZ:0,
+    peX:0, peY:0, peZ:0,
+  },
+
+  dt: 1/50,
+
+  // ── Vessel dynamics ──────────────────────────────────────────────
+  mass:          8.0,    // kg (heavier = more inertia, slower accel)
+  inertiaMOI:   12.0,    // moment of inertia for yaw
+  // Linear drag coefficients (force = -k * v)
+  linDragSurge:  1.2,    // surge (forward) linear drag
+  linDragSway:   3.5,    // sway (lateral) linear drag — much higher
+  linDragAngular:2.5,    // yaw linear drag
+  // Quadratic drag (force = -kq * v * |v|) — dominates at higher speeds
+  quadDragSurge: 0.4,
+  quadDragSway:  1.2,
+  quadDragAngular:0.5,
+
+  // ── Thruster first-order lag ──────────────────────────────────────
+  // Actual thrust = prev_thrust + (cmd - prev_thrust) * (dt/tau)
+  // tau_surge/sway in seconds — larger = slower thruster response
+  tauSurge:  0.30,   // surge thruster response time (s)
+  tauSway:   0.50,   // lateral thruster response time (s)  — slower
+  tauAngular:0.25,   // yaw thruster response time (s)
+  // Current actual thruster outputs (body frame)
+  thrustSurge:  0,
+  thrustSway:   0,
+  thrustAngular:0,
+  // Max force limits
+  maxForceSurge:  25,
+  maxForceSway:   12,
+  maxTorque:      18,
+
+  wind: { speed:0, dir:0 },
+  trail: [],
+  frame: 0,
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// CANVAS
+// ═══════════════════════════════════════════════════════════════════
+const canvas  = document.getElementById('simCanvas');
+const ctx     = canvas.getContext('2d');
+
+// Logical simulation dimensions — simulation coordinates always work in these units.
+// The canvas backing store is scaled by devicePixelRatio for crisp rendering on HiDPI.
+const CW = 820, CH = 600;
+let dpr = 1;
+
+function setupCanvas() {
+  dpr = window.devicePixelRatio || 1;
+  // CSS display size — canvas fills its container width, fixed aspect ratio
+  const cssW = canvas.parentElement.clientWidth - 28; // subtract panel padding
+  const cssH = Math.round(cssW * (CH / CW));
+  canvas.style.width  = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  // Physical backing store at full device resolution
+  canvas.width  = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  // Scale context so all drawing uses logical CW×CH coordinates
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(canvas.width / CW, canvas.height / CH);
+}
+
+setupCanvas();
+window.addEventListener('resize', () => { setupCanvas(); });
+
+function canvasXY(e) {
+  const r = canvas.getBoundingClientRect();
+  // Map CSS pixel position → logical simulation coordinates [0..CW, 0..CH]
+  return {
+    x: (e.clientX - r.left) * (CW / r.width),
+    y: (e.clientY - r.top)  * (CH / r.height),
+  };
+}
+
+canvas.addEventListener('click', e => {
+  const p = canvasXY(e);
+  state.target.x = p.x; state.target.y = p.y;
+  state.outer.iX = 0; state.outer.iY = 0;
+  state.inner.iX = 0; state.inner.iY = 0;
+});
+
+canvas.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const p = canvasXY(e);
+  const dx = p.x - state.robot.x, dy = p.y - state.robot.y;
+  state.targetHeading = Math.atan2(-dy, dx) * 180 / Math.PI;
+  state.outer.iZ = 0; state.inner.iZ = 0;
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// KNOB FACTORY
+// ═══════════════════════════════════════════════════════════════════
+function makeKnob(id, getA, setA, color, readOnly) {
+  const kc = document.getElementById(id);
+  const kx = kc.getContext('2d');
+  let drag = false, last = 0;
+
+  function draw() {
+    const cx=39, cy=39, r=33;
+    kx.clearRect(0,0,78,78);
+    kx.beginPath(); kx.arc(cx,cy,r,0,Math.PI*2);
+    kx.strokeStyle='#1a2535'; kx.lineWidth=2; kx.stroke();
+    for (let i=0;i<36;i++){
+      const a=i*10*Math.PI/180, len=i%9===0?5:2.5;
+      kx.beginPath(); kx.moveTo(cx+r*Math.cos(a),cy+r*Math.sin(a));
+      kx.lineTo(cx+(r-len)*Math.cos(a),cy+(r-len)*Math.sin(a));
+      kx.strokeStyle=i%9===0?'#2e3a4a':'#181f28'; kx.lineWidth=1; kx.stroke();
+    }
+    const g=kx.createRadialGradient(cx-5,cy-5,1,cx,cy,r-4);
+    g.addColorStop(0,readOnly?'#111820':'#18253a'); g.addColorStop(1,'#060a10');
+    kx.beginPath(); kx.arc(cx,cy,r-4,0,Math.PI*2);
+    kx.fillStyle=g; kx.fill();
+    kx.strokeStyle=color+'33'; kx.lineWidth=1; kx.stroke();
+
+    const hr=getA()*Math.PI/180;
+    const px=cx+(r-10)*Math.cos(hr), py=cy+(r-10)*Math.sin(hr);
+    kx.beginPath(); kx.arc(px,py,4,0,Math.PI*2);
+    kx.fillStyle=color; kx.shadowColor=color; kx.shadowBlur=9; kx.fill(); kx.shadowBlur=0;
+    kx.beginPath(); kx.arc(cx,cy,3,0,Math.PI*2); kx.fillStyle='#202a38'; kx.fill();
+  }
+
+  if (!readOnly) {
+    function mouseAngle(e) {
+      const rc=kc.getBoundingClientRect();
+      const ex=e.touches?e.touches[0].clientX:e.clientX;
+      const ey=e.touches?e.touches[0].clientY:e.clientY;
+      return Math.atan2(ey-(rc.top+rc.height/2), ex-(rc.left+rc.width/2))*180/Math.PI;
+    }
+    kc.addEventListener('mousedown', e=>{drag=true; last=mouseAngle(e);});
+    kc.addEventListener('touchstart', e=>{drag=true; last=mouseAngle(e); e.preventDefault();},{passive:false});
+    window.addEventListener('mousemove', e=>{
+      if(!drag) return;
+      const a=mouseAngle(e); let d=a-last;
+      if(d>180)d-=360; if(d<-180)d+=360;
+      setA(((getA()+d)%360+360)%360); last=a; draw();
+    });
+    window.addEventListener('touchmove', e=>{
+      if(!drag) return;
+      const a=mouseAngle(e); let d=a-last;
+      if(d>180)d-=360; if(d<-180)d+=360;
+      setA(((getA()+d)%360+360)%360); last=a; draw(); e.preventDefault();
+    },{passive:false});
+    window.addEventListener('mouseup', ()=>drag=false);
+    window.addEventListener('touchend',()=>drag=false);
+  }
+  return draw;
+}
+
+const drawKnobCurrent = makeKnob('knobCurrent', ()=>((state.heading%360)+360)%360, ()=>{}, '#00e5ff', true);
+const drawKnobTarget  = makeKnob('knobTarget',  ()=>((state.targetHeading%360)+360)%360,
+  v=>{ state.targetHeading=v; state.outer.iZ=0; state.inner.iZ=0; }, '#bf7fff', false);
+
+function drawKnobs() {
+  drawKnobCurrent(); drawKnobTarget();
+  const ch = Math.round(((state.heading%360)+360)%360);
+  const th = Math.round(((state.targetHeading%360)+360)%360);
+  document.getElementById('currentHeadingVal').textContent = String(ch).padStart(3,'0');
+  document.getElementById('targetHeadingVal').textContent  = String(th).padStart(3,'0');
+  document.getElementById('teleHdg').textContent  = ch+'°';
+}
+
+drawKnobs();
+
+// ═══════════════════════════════════════════════════════════════════
+// WIND COMPASS
+// ═══════════════════════════════════════════════════════════════════
+const wcanvas = document.getElementById('windCompass');
+const wctx = wcanvas.getContext('2d');
+let wdrag=false, wlast=0;
+
+function drawWindCompass() {
+  const cx=39,cy=39,r=33;
+  wctx.clearRect(0,0,78,78);
+  wctx.beginPath(); wctx.arc(cx,cy,r,0,Math.PI*2);
+  wctx.strokeStyle='#1a2535'; wctx.lineWidth=2; wctx.stroke();
+  [['E',1,0],['S',0,1],['W',-1,0],['N',0,-1]].forEach(([l,dx,dy])=>{
+    wctx.font='7px monospace'; wctx.fillStyle='#2a3a4a'; wctx.textAlign='center';
+    wctx.fillText(l,cx+dx*(r-7),cy+dy*(r-7)+3);
+  });
+  const g=wctx.createRadialGradient(cx-5,cy-5,1,cx,cy,r-4);
+  g.addColorStop(0,'#111c2a'); g.addColorStop(1,'#060a10');
+  wctx.beginPath(); wctx.arc(cx,cy,r-4,0,Math.PI*2); wctx.fillStyle=g; wctx.fill();
+  wctx.strokeStyle='#7dd3fc22'; wctx.lineWidth=1; wctx.stroke();
+
+  const spd=state.wind.speed, dr=state.wind.dir*Math.PI/180;
+  if(spd>0.05){
+    const r1=r-6, r2=Math.max(r1-8-spd*2, 4);
+    const fx=cx+r1*Math.cos(dr), fy=cy+r1*Math.sin(dr);
+    const tx=cx+r2*Math.cos(dr), ty=cy+r2*Math.sin(dr);
+    wctx.beginPath(); wctx.moveTo(fx,fy); wctx.lineTo(tx,ty);
+    wctx.strokeStyle=`rgba(125,211,252,${Math.min(1,0.4+spd*0.06)})`; wctx.lineWidth=1.5; wctx.stroke();
+    const ang=Math.atan2(ty-fy,tx-fx);
+    wctx.beginPath(); wctx.moveTo(tx,ty);
+    wctx.lineTo(tx-6*Math.cos(ang-0.4),ty-6*Math.sin(ang-0.4));
+    wctx.lineTo(tx-6*Math.cos(ang+0.4),ty-6*Math.sin(ang+0.4));
+    wctx.closePath(); wctx.fillStyle='#7dd3fc'; wctx.fill();
+  }
+  const px=cx+(r-10)*Math.cos(dr), py=cy+(r-10)*Math.sin(dr);
+  wctx.beginPath(); wctx.arc(px,py,4,0,Math.PI*2);
+  wctx.fillStyle='#7dd3fc'; wctx.shadowColor='#7dd3fc'; wctx.shadowBlur=8; wctx.fill(); wctx.shadowBlur=0;
+  wctx.font='bold 10px monospace'; wctx.fillStyle='#7dd3fc'; wctx.textAlign='center';
+  wctx.fillText(spd.toFixed(1),cx,cy+4);
+}
+
+function windAngle(e){
+  const rc=wcanvas.getBoundingClientRect();
+  const ex=e.touches?e.touches[0].clientX:e.clientX;
+  const ey=e.touches?e.touches[0].clientY:e.clientY;
+  return Math.atan2(ey-(rc.top+rc.height/2),ex-(rc.left+rc.width/2))*180/Math.PI;
+}
+wcanvas.addEventListener('mousedown',e=>{wdrag=true;wlast=windAngle(e);});
+wcanvas.addEventListener('touchstart',e=>{wdrag=true;wlast=windAngle(e);e.preventDefault();},{passive:false});
+window.addEventListener('mousemove',e=>{
+  if(!wdrag)return; const a=windAngle(e); let d=a-wlast;
+  if(d>180)d-=360; if(d<-180)d+=360;
+  state.wind.dir=(state.wind.dir+d+360)%360; wlast=a;
+  document.getElementById('windDir').value=Math.round(state.wind.dir);
+  document.getElementById('windDirVal').textContent=Math.round(state.wind.dir)+'°';
+  drawWindCompass();
+});
+window.addEventListener('touchmove',e=>{
+  if(!wdrag)return; const a=windAngle(e); let d=a-wlast;
+  if(d>180)d-=360; if(d<-180)d+=360;
+  state.wind.dir=(state.wind.dir+d+360)%360; wlast=a;
+  document.getElementById('windDir').value=Math.round(state.wind.dir);
+  document.getElementById('windDirVal').textContent=Math.round(state.wind.dir)+'°';
+  drawWindCompass(); e.preventDefault();
+},{passive:false});
+window.addEventListener('mouseup',()=>wdrag=false);
+window.addEventListener('touchend',()=>wdrag=false);
+drawWindCompass();
+
+// ═══════════════════════════════════════════════════════════════════
+// CONTROLLER TOGGLE
+// ═══════════════════════════════════════════════════════════════════
+function toggleController() {
+  controllerActive = !controllerActive;
+  const btn = document.getElementById('ctrlBtn');
+  if (controllerActive) {
+    btn.textContent='● CONTROLLER ACTIVE'; btn.className='ctrl-btn on';
+    document.getElementById('modeLabel').textContent='ACTIVE';
+    // Flush integrators on re-activation to prevent windup bump
+    state.outer.iX=state.outer.iY=state.outer.iZ=0;
+    state.inner.iX=state.inner.iY=state.inner.iZ=0;
+  } else {
+    btn.textContent='○ CONTROLLER OFF'; btn.className='ctrl-btn off';
+    document.getElementById('modeLabel').textContent='MANUAL';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AXIS SELECTOR & GAIN UI
+// ═══════════════════════════════════════════════════════════════════
+const AXIS_COLORS = { x:'var(--accent)', y:'var(--accent2)', z:'var(--accent4)' };
+
+function saveAxis(a) {
+  gains[a].o_kp = +document.getElementById('o_kp').value;
+  gains[a].o_ki = +document.getElementById('o_ki').value;
+  gains[a].o_kd = +document.getElementById('o_kd').value;
+  gains[a].velLim= +document.getElementById('velLim').value;
+  gains[a].i_kp = +document.getElementById('i_kp').value;
+  gains[a].i_ki = +document.getElementById('i_ki').value;
+  gains[a].i_kd = +document.getElementById('i_kd').value;
+}
+
+function loadAxis(a) {
+  const g = gains[a];
+  const set = (id,v)=>{ document.getElementById(id).value=v; document.getElementById(id+'Val').textContent=Number(v).toFixed(id==='velLim'?1:2); };
+  set('o_kp',g.o_kp); set('o_ki',g.o_ki); set('o_kd',g.o_kd);
+  set('velLim',g.velLim);
+  set('i_kp',g.i_kp); set('i_ki',g.i_ki); set('i_kd',g.i_kd);
+  const c = AXIS_COLORS[a];
+  ['oLabelP','oLabelI','oLabelD'].forEach(id=>document.getElementById(id).style.color=c);
+  ['x','y','z'].forEach(ax=>{
+    const t=document.getElementById('tab-'+ax);
+    t.className='pid-tab'+(ax===a?' a'+ax:'');
+  });
+}
+
+function selectAxis(a) {
+  saveAxis(activeAxis);
+  activeAxis = a;
+  loadAxis(a);
+}
+
+function onGainChange() {
+  const fmt=(id,dec)=>{
+    const v=+document.getElementById(id).value;
+    document.getElementById(id+'Val').textContent=v.toFixed(dec);
+    return v;
+  };
+  gains[activeAxis].o_kp = fmt('o_kp',2);
+  gains[activeAxis].o_ki = fmt('o_ki',3);
+  gains[activeAxis].o_kd = fmt('o_kd',2);
+  gains[activeAxis].velLim= fmt('velLim',1);
+  gains[activeAxis].i_kp = fmt('i_kp',2);
+  gains[activeAxis].i_ki = fmt('i_ki',2);
+  gains[activeAxis].i_kd = fmt('i_kd',2);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════
+function clamp(v,lo,hi){ return v<lo?lo:v>hi?hi:v; }
+function wrapAngle(a){ while(a>180)a-=360; while(a<-180)a+=360; return a; }
+
+// ═══════════════════════════════════════════════════════════════════
+// CASCADED PID STEP
+// ═══════════════════════════════════════════════════════════════════
+function pidStep() {
+  const dt = state.dt;
+
+  // ── Heading trig ─────────────────────────────────────────────────
+  const theta = state.heading * Math.PI / 180;
+  const cosT = Math.cos(theta), sinT = Math.sin(theta);
+
+  // ── Body-frame velocities (from world vel) ────────────────────────
+  const surge =  cosT * state.vel.x + sinT * state.vel.y;
+  const sway  = -sinT * state.vel.x + cosT * state.vel.y;
+  state.surge = surge; state.sway = sway; state.yawRate = state.angularVel;
+
+  // ── World-frame position error ────────────────────────────────────
+  const errX = state.target.x - state.robot.x;
+  const errY = state.target.y - state.robot.y;
+  const dist = Math.sqrt(errX*errX + errY*errY);
+  const errZ = wrapAngle(state.targetHeading - state.heading);
+
+  // ── Wind ──────────────────────────────────────────────────────────
+  const windPushRad = (state.wind.dir + 180) * Math.PI / 180;
+  const ws = state.wind.speed, wc = 0.08;
+  const wFx = Math.cos(windPushRad)*ws*ws*wc;
+  const wFy = Math.sin(windPushRad)*ws*ws*wc;
+  const wSide = Math.sin(windPushRad - theta);
+  const wTorque = ws*ws*wc*0.6*wSide;
+  document.getElementById('wFdisp').textContent = (Math.sqrt(wFx*wFx+wFy*wFy)).toFixed(2);
+  document.getElementById('wTdisp').textContent = wTorque.toFixed(2);
+
+  // ─────────────────────────────────────────────────────────────────
+  // CASCADED PID — all three axes
+  // Outer: position error → velocity setpoint (clamped to velLim)
+  // Inner: velocity error → force/torque command
+  // ─────────────────────────────────────────────────────────────────
+  let _cmdSurge=0, _cmdSway=0, _torqueZ=0;
+  let velSpX=0, velSpY=0, velSpZ=0;
+
+  if (controllerActive) {
+    const gx = gains.x, gy = gains.y, gz = gains.z;
+    const MAX_OI = 300;
+
+    // ── OUTER X (world frame lateral) ────────────────────────────
+    state.outer.iX = clamp(state.outer.iX + errX*dt, -MAX_OI, MAX_OI);
+    const deX = (errX - state.outer.peX)/dt; state.outer.peX = errX;
+    let vsX = gx.o_kp*errX + gx.o_ki*state.outer.iX + gx.o_kd*deX;
+    vsX = clamp(vsX, -gx.velLim, gx.velLim);    // ← velocity limit
+    velSpX = vsX;
+
+    // ── OUTER Y (world frame forward) ────────────────────────────
+    state.outer.iY = clamp(state.outer.iY + errY*dt, -MAX_OI, MAX_OI);
+    const deY = (errY - state.outer.peY)/dt; state.outer.peY = errY;
+    let vsY = gy.o_kp*errY + gy.o_ki*state.outer.iY + gy.o_kd*deY;
+    vsY = clamp(vsY, -gy.velLim, gy.velLim);
+    velSpY = vsY;
+
+    // ── OUTER Z (heading) ─────────────────────────────────────────
+    state.outer.iZ = clamp(state.outer.iZ + errZ*dt, -300, 300);
+    const deZ = (errZ - state.outer.peZ)/dt; state.outer.peZ = errZ;
+    let vsZ = gz.o_kp*errZ + gz.o_ki*state.outer.iZ + gz.o_kd*deZ;
+    vsZ = clamp(vsZ, -gz.velLim, gz.velLim);
+    velSpZ = vsZ;
+
+    // ── Transform velocity setpoints to body frame ─────────────────
+    // World vel setpoints → body frame (same rotation as position error)
+    const vsSurge =  cosT*vsX + sinT*vsY;   // forward vel setpoint
+    const vsSway  = -sinT*vsX + cosT*vsY;   // lateral vel setpoint
+
+    // ── INNER X (sway velocity) ───────────────────────────────────
+    const veSwY = vsSway - sway;             // velocity error lateral
+    const MAX_II = 100;
+    state.inner.iX = clamp(state.inner.iX + veSwY*dt, -MAX_II, MAX_II);
+    const dieX = (veSwY - state.inner.peX)/dt; state.inner.peX = veSwY;
+    _cmdSway = gx.i_kp*veSwY + gx.i_ki*state.inner.iX + gx.i_kd*dieX;
+
+    // ── INNER Y (surge velocity) ──────────────────────────────────
+    const veSuY = vsSurge - surge;
+    state.inner.iY = clamp(state.inner.iY + veSuY*dt, -MAX_II, MAX_II);
+    const dieY = (veSuY - state.inner.peY)/dt; state.inner.peY = veSuY;
+    _cmdSurge = gy.i_kp*veSuY + gy.i_ki*state.inner.iY + gy.i_kd*dieY;
+
+    // ── INNER Z (yaw rate) ────────────────────────────────────────
+    const veZ = vsZ - state.angularVel;
+    state.inner.iZ = clamp(state.inner.iZ + veZ*dt, -MAX_II, MAX_II);
+    const dieZ = (veZ - state.inner.peZ)/dt; state.inner.peZ = veZ;
+    _torqueZ = gz.i_kp*veZ + gz.i_ki*state.inner.iZ + gz.i_kd*dieZ;
+
+  } else {
+    // Track errors so derivative is smooth on re-activation
+    state.outer.peX=errX; state.outer.peY=errY; state.outer.peZ=errZ;
+    state.inner.peX=0;    state.inner.peY=0;    state.inner.peZ=0;
+  }
+
+  // ── Thruster first-order lag (body frame) ────────────────────────
+  // Commanded forces are clamped then filtered through a lag τ
+  // This simulates thruster spin-up: actual_thrust += (cmd - actual) * (dt/τ)
+  const cmdSurgeRaw  = clamp(controllerActive ? _cmdSurge  : 0, -state.maxForceSurge,  state.maxForceSurge);
+  const cmdSwayRaw   = clamp(controllerActive ? _cmdSway   : 0, -state.maxForceSway,   state.maxForceSway);
+  const cmdTorqueRaw = clamp(controllerActive ? _torqueZ   : 0, -state.maxTorque,      state.maxTorque);
+
+  const alphaS  = dt / state.tauSurge;
+  const alphaW  = dt / state.tauSway;
+  const alphaA  = dt / state.tauAngular;
+  state.thrustSurge   += (cmdSurgeRaw  - state.thrustSurge)   * alphaS;
+  state.thrustSway    += (cmdSwayRaw   - state.thrustSway)    * alphaW;
+  state.thrustAngular += (cmdTorqueRaw - state.thrustAngular) * alphaA;
+
+  // ── Add wind force (world frame directly) ────────────────────────
+  // Body → world for PID thrust
+  const thrustWorldX = cosT * state.thrustSurge - sinT * state.thrustSway;
+  const thrustWorldY = sinT * state.thrustSurge + cosT * state.thrustSway;
+  const totalFx = thrustWorldX + wFx;
+  const totalFy = thrustWorldY + wFy;
+
+  // ── Linear + quadratic drag (body frame) ─────────────────────────
+  const linDragSurgeF  = -state.linDragSurge  * surge  - state.quadDragSurge  * surge  * Math.abs(surge);
+  const linDragSwayF   = -state.linDragSway   * sway   - state.quadDragSway   * sway   * Math.abs(sway);
+  const linDragAngF    = -state.linDragAngular * state.angularVel - state.quadDragAngular * state.angularVel * Math.abs(state.angularVel);
+
+  // Drag back to world frame
+  const dragWorldX = cosT * linDragSurgeF - sinT * linDragSwayF;
+  const dragWorldY = sinT * linDragSurgeF + cosT * linDragSwayF;
+
+  // ── Newton: a = F/m, integrate velocity ──────────────────────────
+  const accelX = (totalFx + dragWorldX) / state.mass;
+  const accelY = (totalFy + dragWorldY) / state.mass;
+  state.vel.x += accelX * dt;
+  state.vel.y += accelY * dt;
+
+  // ── Angular: α = τ/I ─────────────────────────────────────────────
+  const angAccel = (state.thrustAngular + wTorque + linDragAngF) / state.inertiaMOI;
+  state.angularVel += angAccel * dt;
+
+  // ── Integrate position ────────────────────────────────────────────
+  state.robot.x = clamp(state.robot.x + state.vel.x, 12, CW-12);
+  state.robot.y = clamp(state.robot.y + state.vel.y, 12, CH-12);
+  state.heading += state.angularVel;
+
+  return { errX, errY, errZ, dist, velSpX, velSpY, velSpZ,
+           forceX: thrustWorldX, forceY: thrustWorldY,
+           torqueZ: state.thrustAngular, surge, sway };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DRAW
+// ═══════════════════════════════════════════════════════════════════
+function drawScene(r) {
+  ctx.clearRect(0,0,CW,CH);
+  ctx.fillStyle='#060810'; ctx.fillRect(0,0,CW,CH);
+
+  // Grid
+  ctx.strokeStyle='rgba(0,229,255,0.04)'; ctx.lineWidth=1;
+  for(let x=0;x<CW;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,CH);ctx.stroke();}
+  for(let y=0;y<CH;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(CW,y);ctx.stroke();}
+
+  // Trail
+  if(state.trail.length>1){
+    ctx.beginPath(); ctx.moveTo(state.trail[0].x,state.trail[0].y);
+    for(let i=1;i<state.trail.length;i++) ctx.lineTo(state.trail[i].x,state.trail[i].y);
+    ctx.strokeStyle='rgba(0,229,255,0.10)'; ctx.lineWidth=1.5; ctx.stroke();
+  }
+
+  const rx=state.robot.x, ry=state.robot.y;
+  const theta=state.heading*Math.PI/180;
+
+  // Dashed line to target
+  if(r.dist>5){
+    ctx.beginPath(); ctx.setLineDash([5,9]);
+    ctx.moveTo(rx,ry); ctx.lineTo(state.target.x,state.target.y);
+    ctx.strokeStyle='rgba(255,107,53,0.2)'; ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // Target crosshair
+  const tx=state.target.x, ty=state.target.y;
+  ctx.beginPath(); ctx.arc(tx,ty,13,0,Math.PI*2);
+  ctx.strokeStyle='rgba(255,107,53,0.4)'; ctx.lineWidth=1; ctx.stroke();
+  ctx.beginPath(); ctx.arc(tx,ty,4.5,0,Math.PI*2);
+  ctx.fillStyle='#ff6b35'; ctx.shadowColor='#ff6b35'; ctx.shadowBlur=14; ctx.fill(); ctx.shadowBlur=0;
+  ctx.strokeStyle='rgba(255,107,53,0.3)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(tx-17,ty); ctx.lineTo(tx+17,ty); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(tx,ty-17); ctx.lineTo(tx,ty+17); ctx.stroke();
+
+  // Velocity setpoint vector (shows outer loop output direction, scaled)
+  if(controllerActive && (Math.abs(r.velSpX)+Math.abs(r.velSpY))>0.1){
+    const sc=6;
+    ctx.beginPath(); ctx.moveTo(rx,ry);
+    ctx.lineTo(rx+r.velSpX*sc, ry+r.velSpY*sc);
+    ctx.strokeStyle='rgba(57,255,20,0.35)'; ctx.lineWidth=1; ctx.setLineDash([3,5]); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // Heading target arc + line
+  const thetaT = state.targetHeading*Math.PI/180;
+  if(Math.abs(r.errZ)>1){
+    ctx.beginPath(); ctx.arc(rx,ry,36, theta-Math.PI/2, thetaT-Math.PI/2, r.errZ<0);
+    ctx.strokeStyle='rgba(191,127,255,0.35)'; ctx.lineWidth=1.5; ctx.stroke();
+  }
+  const hll=52;
+  ctx.beginPath(); ctx.setLineDash([4,7]);
+  ctx.moveTo(rx,ry); ctx.lineTo(rx+hll*Math.cos(thetaT), ry+hll*Math.sin(thetaT));
+  ctx.strokeStyle='rgba(191,127,255,0.45)'; ctx.lineWidth=1; ctx.stroke(); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(rx+hll*Math.cos(thetaT),ry+hll*Math.sin(thetaT),3.5,0,Math.PI*2);
+  ctx.fillStyle='#bf7fff'; ctx.shadowColor='#bf7fff'; ctx.shadowBlur=7; ctx.fill(); ctx.shadowBlur=0;
+
+  // ── Boat hull ──────────────────────────────────────────────────────
+  ctx.save(); ctx.translate(rx,ry); ctx.rotate(theta);
+  ctx.shadowColor='#00e5ff'; ctx.shadowBlur=14;
+  ctx.fillStyle='#0b1722'; ctx.strokeStyle='#00e5ff'; ctx.lineWidth=1.5;
+  ctx.beginPath();
+  ctx.moveTo(20,0); ctx.lineTo(11,-10); ctx.lineTo(-15,-10);
+  ctx.lineTo(-15,10); ctx.lineTo(11,10); ctx.closePath();
+  ctx.fill(); ctx.stroke(); ctx.shadowBlur=0;
+  // Bow dot
+  ctx.fillStyle='#00e5ff'; ctx.shadowColor='#00e5ff'; ctx.shadowBlur=6;
+  ctx.beginPath(); ctx.arc(18,0,3,0,Math.PI*2); ctx.fill(); ctx.shadowBlur=0;
+  // Body axes
+  ctx.strokeStyle='rgba(0,229,255,0.35)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(22,0); ctx.stroke();
+  ctx.strokeStyle='rgba(255,107,53,0.35)';
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-20); ctx.stroke();
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(0,0,2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // ── World velocity vector ──────────────────────────────────────────
+  const vm=Math.sqrt(state.vel.x**2+state.vel.y**2);
+  if(vm>0.1){
+    ctx.beginPath(); ctx.moveTo(rx,ry);
+    ctx.lineTo(rx+state.vel.x*14, ry+state.vel.y*14);
+    ctx.strokeStyle='#39ff14'; ctx.lineWidth=2;
+    ctx.shadowColor='#39ff14'; ctx.shadowBlur=7; ctx.stroke(); ctx.shadowBlur=0;
+  }
+
+  // ── Wind indicator (top-left) ──────────────────────────────────────
+  if(state.wind.speed>0.1){
+    const wr=(state.wind.dir+180)*Math.PI/180;
+    const as=state.wind.speed*5.5;
+    ctx.save(); ctx.translate(CW*0.07, CH*0.08);
+    ctx.beginPath(); ctx.arc(0,0,18,0,Math.PI*2);
+    ctx.strokeStyle='rgba(125,211,252,0.12)'; ctx.lineWidth=1; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,0);
+    ctx.lineTo(Math.cos(wr)*as, Math.sin(wr)*as);
+    ctx.strokeStyle='rgba(125,211,252,0.65)'; ctx.lineWidth=2;
+    ctx.shadowColor='#7dd3fc'; ctx.shadowBlur=8; ctx.stroke(); ctx.shadowBlur=0;
+    const tang=wr;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(tang)*as, Math.sin(tang)*as);
+    ctx.lineTo(Math.cos(tang-0.4)*(as-6), Math.sin(tang-0.4)*(as-6));
+    ctx.lineTo(Math.cos(tang+0.4)*(as-6), Math.sin(tang+0.4)*(as-6));
+    ctx.closePath(); ctx.fillStyle='#7dd3fc'; ctx.fill();
+    ctx.font='9px monospace'; ctx.fillStyle='rgba(125,211,252,0.55)'; ctx.textAlign='center';
+    ctx.fillText('WIND',0,28); ctx.fillText(Math.round(state.wind.dir)+'° '+state.wind.speed.toFixed(1),0,38);
+    ctx.restore();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// UPDATE UI
+// ═══════════════════════════════════════════════════════════════════
+function updateUI(r) {
+  document.getElementById('frameCount').textContent = state.frame;
+  document.getElementById('telePosX').textContent   = state.robot.x.toFixed(1);
+  document.getElementById('telePosY').textContent   = state.robot.y.toFixed(1);
+  document.getElementById('teleDist').textContent   = r.dist.toFixed(1);
+  document.getElementById('teleErrX').textContent   = r.errX.toFixed(1);
+  document.getElementById('teleErrY').textContent   = r.errY.toFixed(1);
+  document.getElementById('teleErrZ').textContent   = r.errZ.toFixed(1)+'°';
+  document.getElementById('teleSurge').textContent  = r.surge.toFixed(2);
+  document.getElementById('teleSway').textContent   = r.sway.toFixed(2);
+  document.getElementById('headingErrDisplay').textContent = r.errZ.toFixed(1)+'°';
+  document.getElementById('angVelDisplay').textContent     = state.angularVel.toFixed(2);
+
+  // Dynamics display
+  const speed = Math.sqrt(state.vel.x**2 + state.vel.y**2);
+  document.getElementById('speedDisp').textContent = speed.toFixed(2);
+  // Approximate acceleration magnitude
+  const accel = Math.sqrt(
+    ((state.thrustSurge + state.thrustAngular*0) / state.mass)**2 +
+    ((state.thrustSway) / state.mass)**2
+  );
+  document.getElementById('accelDisp').textContent = (Math.sqrt(state.thrustSurge**2+state.thrustSway**2)/state.mass).toFixed(2);
+
+  // Vel setpoints display
+  document.getElementById('vsX').textContent = ' '+r.velSpX.toFixed(2);
+  document.getElementById('vsY').textContent = ' '+r.velSpY.toFixed(2);
+  document.getElementById('vsZ').textContent = ' '+r.velSpZ.toFixed(2);
+
+  // Commands
+  const M=10;
+  function setCmd(idC,idV,idB, cmd, vel, color) {
+    const el=document.getElementById(idC);
+    el.textContent=cmd.toFixed(2);
+    el.style.color=cmd>0.05?color:cmd<-0.05?'var(--accent2)':'var(--dim)';
+    document.getElementById(idV).textContent='v='+vel.toFixed(2);
+    document.getElementById(idB).style.width=Math.min(100,Math.abs(cmd)/M*100)+'%';
+    document.getElementById(idB).style.background=cmd>=0?color:'var(--accent2)';
+  }
+
+  if(controllerActive){
+    // cmdX is the world-frame X force → corresponds to sway body command
+    setCmd('cmdX','velX','barX', r.forceX, r.sway,    'var(--accent)');
+    setCmd('cmdY','velY','barY', r.forceY, r.surge,   'var(--accent2)');
+    setCmd('cmdZ','velZ','barZ', r.torqueZ,state.angularVel,'var(--accent4)');
+    document.getElementById('velZ').textContent='ω='+state.angularVel.toFixed(2);
+  } else {
+    ['cmdX','cmdY','cmdZ'].forEach(id=>{ document.getElementById(id).textContent='0.00'; document.getElementById(id).style.color='var(--dim)'; });
+    ['barX','barY','barZ'].forEach(id=>document.getElementById(id).style.width='0%');
+    ['velX','velY'].forEach(id=>document.getElementById(id).textContent='v=0.00');
+    document.getElementById('velZ').textContent='ω=0.00';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MAIN LOOP
+// ═══════════════════════════════════════════════════════════════════
+let lastTime=0;
+function loop(ts) {
+  requestAnimationFrame(loop);
+  if(ts-lastTime<18) return;
+  lastTime=ts;
+  if(simPaused) return;
+
+  state.frame++;
+  const result = pidStep();
+
+  state.trail.push({x:state.robot.x, y:state.robot.y});
+  if(state.trail.length>500) state.trail.shift();
+
+  drawScene(result);
+  updateUI(result);
+  drawKnobs();
+  drawWindCompass();
+}
+
+requestAnimationFrame(loop);
+
+// ═══════════════════════════════════════════════════════════════════
+// CONTROLS
+// ═══════════════════════════════════════════════════════════════════
+function togglePause() {
+  simPaused = !simPaused;
+  const btn=document.getElementById('btnPause');
+  btn.textContent = simPaused?'RESUME':'PAUSE';
+  btn.classList.toggle('active', simPaused);
+}
+
+function resetSim() {
+  state.robot  = {x:410,y:300}; state.target = {x:410,y:300};
+  state.vel    = {x:0,y:0}; state.heading=0; state.targetHeading=0; state.angularVel=0;
+  state.surge=0; state.sway=0; state.yawRate=0;
+  state.outer = {iX:0,iY:0,iZ:0,peX:0,peY:0,peZ:0};
+  state.inner = {iX:0,iY:0,iZ:0,peX:0,peY:0,peZ:0};
+  state.thrustSurge=0; state.thrustSway=0; state.thrustAngular=0;
+  state.trail=[]; state.frame=0;
+  document.getElementById('windSpeed').value=0;
+  document.getElementById('windSpeedVal').textContent='0.0';
+  state.wind.speed=0;
+  drawKnobs(); drawWindCompass();
+}
+
+function applyPresetGains(axis, og, ig, vl) {
+  gains[axis] = { o_kp:og[0],o_ki:og[1],o_kd:og[2], velLim:vl, i_kp:ig[0],i_ki:ig[1],i_kd:ig[2] };
+  if(activeAxis===axis) loadAxis(axis);
+}
+
+function setPreset(name) {
+  const P = {
+    //            outer[kp,ki,kd]     inner[kp,ki,kd]  velLim
+    dp:   { x:[[1.2,0.02,0.5],[3.0,0.10,0.20],5.0],
+             y:[[1.5,0.02,0.5],[3.5,0.10,0.20],5.0],
+             z:[[2.0,0.01,0.8],[4.0,0.05,0.10],8.0] },
+    fast: { x:[[3.0,0.05,0.8],[5.0,0.20,0.30],10.0],
+             y:[[3.0,0.05,0.8],[5.0,0.20,0.30],10.0],
+             z:[[4.0,0.02,1.0],[6.0,0.10,0.15],12.0] },
+    tight:{ x:[[2.0,0.10,0.6],[4.0,0.50,0.10],3.0],
+             y:[[2.0,0.10,0.6],[4.0,0.50,0.10],3.0],
+             z:[[2.5,0.05,0.8],[4.0,0.10,0.10],4.0] },
+    slow: { x:[[0.5,0.01,0.3],[1.5,0.05,0.10],2.0],
+             y:[[0.5,0.01,0.3],[1.5,0.05,0.10],2.0],
+             z:[[1.0,0.01,0.5],[2.0,0.02,0.05],3.0] },
+  };
+  const preset = P[name];
+  ['x','y','z'].forEach(a => applyPresetGains(a, preset[a][0], preset[a][1], preset[a][2]));
+}
+</script>
+</body>
+</html>
